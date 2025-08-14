@@ -105,8 +105,10 @@ function buildDeck(cfg){
 const grid = $('#grid');
 function renderGoal(cfg){ $('#goalText').textContent = cfg.label; }
 function renderGrid(deck){
-  grid.className = `grid cols-${deck.length}`;  // 牌數需是 8/10/12/14/16/20 之一以符合既有 CSS
+  function renderGrid(deck){
+  grid.className = `grid cols-${deck.length}`;
   grid.innerHTML = '';
+
   deck.forEach((card,idx)=>{
     const el = document.createElement('div');
     el.className = 'card';
@@ -114,15 +116,28 @@ function renderGrid(deck){
     el.dataset.target = card.isTarget ? '1' : '0';
 
     const img = document.createElement('img');
-    img.src = IMG_DIR + card.src;
     img.alt = card.isTarget ? 'target' : 'distractor';
-    img.onerror = () => { el.style.outline = '2px dashed #f59e0b'; };
-    el.appendChild(img);
 
+    // 第一次用原始檔名
+    img.src = IMG_DIR + card.src;
+
+    // 若失敗 → 再用 URL 編碼後的檔名嘗試一次
+    img.onerror = () => {
+      if (!img.dataset.retry) {
+        img.dataset.retry = '1';
+        img.src = IMG_DIR + encodeURIComponent(card.src);
+      } else {
+        // 兩次都失敗 → 做醒目標記，方便排查
+        el.style.outline = '2px dashed #f59e0b';
+      }
+    };
+
+    el.appendChild(img);
     el.addEventListener('click', ()=> onCardClick(el));
     grid.appendChild(el);
   });
 }
+
 function scoreDelta(d){ state.score = Math.max(0, state.score + d); $('#score').textContent = state.score; }
 
 function onCardClick(el){
