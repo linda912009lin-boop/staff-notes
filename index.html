@@ -32,10 +32,15 @@
   .center{text-align:center}
   .hidden{display:none!important}
   footer{padding:16px;color:var(--muted);text-align:center}
-  /* 音效控制條 */
+
+  /* 音效控制與混音器 */
   .audio-controls{display:flex;align-items:center;gap:8px}
   .audio-controls .btn{padding:8px 10px;border-radius:999px;font-size:14px}
   .audio-controls input[type="range"]{width:120px}
+  #mixer .mix-row{ display:flex; align-items:center; gap:10px; margin:8px 0; }
+  #mixer .mix-row label{ width:160px; }
+  #mixer .mix-row input[type="range"]{ width:220px; }
+  #mixer .mix-row span{ min-width:48px; text-align:right; color:var(--muted); }
 </style>
 </head>
 <body>
@@ -53,6 +58,7 @@
         <button id="toggleBgm" class="btn ghost" title="背景音樂播放/暫停">🎵 BGM：關</button>
         <label class="muted" for="bgmVol">音量</label>
         <input id="bgmVol" type="range" min="0" max="1" step="0.01" value="0.4" />
+        <button id="btnMixer" class="btn ghost" title="調整音量">🎚️ 調整音量</button>
       </div>
       <button id="btnRestart" class="btn ghost">重新開始</button>
     </div>
@@ -80,6 +86,23 @@
       <div style="margin-top:8px">總用時 <b id="goTime"></b>．總分 <b id="goScore"></b></div>
       <div style="margin-top:12px">
         <button id="btnRestart2" class="btn">重新開始</button>
+      </div>
+    </div>
+
+    <!-- 音量混音器 -->
+    <div id="mixer" class="panel hidden">
+      <b>音量混音器</b>
+      <div class="muted" style="margin:6px 0 10px">調整各音效與背景音樂的相對音量（會自動記住）。</div>
+      <div class="mix-row"><label>總音量</label><input id="vol-master" type="range" min="0" max="1.5" step="0.01"><span id="pct-master"></span></div>
+      <div class="mix-row"><label>✔️ 正確（correct）</label><input id="vol-correct" type="range" min="0" max="1.5" step="0.01"><span id="pct-correct"></span></div>
+      <div class="mix-row"><label>❌ 錯誤（wrong）</label>  <input id="vol-wrong"   type="range" min="0" max="1.5" step="0.01"><span id="pct-wrong"></span></div>
+      <div class="mix-row"><label>🎉 過關（clear）</label>  <input id="vol-clear"   type="range" min="0" max="1.5" step="0.01"><span id="pct-clear"></span></div>
+      <div class="mix-row"><label>⏳ 倒數嗶（tick）</label><input id="vol-tick"    type="range" min="0" max="1.5" step="0.01"><span id="pct-tick"></span></div>
+      <div class="mix-row"><label>🎵 背景音樂（bgm）</label><input id="vol-bgm"     type="range" min="0" max="1.5" step="0.01"><span id="pct-bgm"></span></div>
+      <div style="margin-top:10px; display:flex; gap:8px">
+        <button id="btnTestAll" class="btn">測試全部音效</button>
+        <button id="btnResetVol" class="btn ghost">還原預設</button>
+        <button id="btnCloseMixer" class="btn ghost">關閉</button>
       </div>
     </div>
   </main>
@@ -133,7 +156,7 @@ function pad(n){ return String(n).padStart(2,'0') }
 function fmt(ms){ const s=Math.max(0, Math.floor(ms/1000)); const m=Math.floor(s/60); const r=s%60; return `${pad(m)}:${pad(r)}` }
 function imagesFor(noteKey){ const k = NOTE_MAP[noteKey] ? noteKey : (ALIAS[noteKey] || null); return k ? NOTE_MAP[k] : null; }
 
-/* ========= 音效與背景音樂 ========= */
+/* ========= 音效與背景音樂（含音量混音器） ========= */
 const SND_DIR = './sounds/';
 const sounds = {
   correct: new Audio(SND_DIR + 'correct.mp3'),
@@ -141,18 +164,33 @@ const sounds = {
   clear:   new Audio(SND_DIR + 'clear.mp3'),
   tick:    new Audio(SND_DIR + 'tick.mp3'),
 };
+// 基礎音量（程式層校正），再乘上使用者調整＆總音量
+const BASE_VOL = { correct: 0.8, wrong: 0.45, clear: 0.8, tick: 0.25, bgm: 0.4, master: 1.0 };
+// 使用者自訂（0~1.5），存在 localStorage
+const DEFAULT_VOL = { master:1, correct:1, wrong:1, clear:1, tick:1, bgm:1 };
+let VOL = (()=> { try { return { ...DEFAULT_VOL, ...(JSON.parse(localStorage.getItem('sfxVol')||'{}')) }; } catch { return { ...DEFAULT_VOL }; } })();
+function saveVOL(){ localStorage.setItem('sfxVol', JSON.stringify(VOL)); }
+
 function playSfx(name){
   if(!state.sfxOn) return;
-  const a = sounds[name];
-  if(!a) return;
-  const n = a.cloneNode(); // 允許連播
-  n.volume = 0.9;
-  n.play().catch(()=>{ /* 首次未互動可能被阻擋 */ });
+  const a = sounds[name]; if(!a) return;
+  const vol = (BASE_VOL[name] ?? 0.8) * (VOL[name] ?? 1) * (VOL.master ?? 1);
+
+  // tick：避免疊聲 → 每次先停、歸零，再播（不 clone）
+  if(name === 'tick'){
+    try { a.pause(); a.currentTime = 0; a.volume = vol; a.play(); } catch(e){}
+    return;
+  }
+  // 其他允許連播 → clone
+  const n = a.cloneNode(); n.volume = vol;
+  n.play().catch(()=>{});
 }
-// 背景音樂（預設關，需點按鈕開）
+
+// 背景音樂（預設關）
 const bgm = new Audio(SND_DIR + 'bgm.mp3');
 bgm.loop = true;
-bgm.volume = 0.4;
+function applyBgmVolume(){ bgm.volume = (BASE_VOL.bgm * (VOL.bgm ?? 1) * (VOL.master ?? 1)); }
+applyBgmVolume();
 
 /* ========= 狀態 ========= */
 const levelTotal = LEVELS.length;
@@ -185,7 +223,7 @@ function startCountdown(sec){
     const left = Math.max(0, state.levelLimitMs - elapsed);
     $('#time').textContent = fmt(left);
 
-    // 最後 5 秒嗶聲
+    // 最後 5 秒嗶聲（不疊聲）
     const leftSec = Math.ceil(left/1000);
     if (leftSec <= 5 && leftSec !== lastBeepSec && left > 0){
       playSfx('tick');
@@ -326,7 +364,6 @@ function startLevel(n){
   startCountdown(cfg.timeSec);
 }
 function nextLevel(){
-  if(state.isTimeout) return;
   if(state.level >= levelTotal){ showGameOver(); }
   else { startLevel(state.level + 1); }
 }
@@ -361,19 +398,75 @@ btnBgm.addEventListener('click', async ()=>{
   btnBgm.textContent = state.bgmOn ? '🎵 BGM：開' : '🎵 BGM：關';
   try{
     if(state.bgmOn){
-      bgm.volume = parseFloat(volBgm.value || '0.4');
+      applyBgmVolume();
       await bgm.play();
     }else{
       bgm.pause();
     }
   }catch(e){
-    // 若被自動播放策略擋住，提示使用者再點一次
     console.warn('BGM play blocked until user gesture', e);
   }
 });
 volBgm.addEventListener('input', ()=>{
-  bgm.volume = parseFloat(volBgm.value || '0.4');
+  VOL.bgm = parseFloat(volBgm.value || '0.4') / BASE_VOL.bgm; // 讓滑桿也影響 mixer 的 bgm 倍率
+  saveVOL(); applyBgmVolume();
 });
+
+/* ========= Mixer 開關 & 綁定 ========= */
+const mixer = document.getElementById('mixer');
+const btnMixer = document.getElementById('btnMixer');
+const btnCloseMixer = document.getElementById('btnCloseMixer');
+const btnTestAll = document.getElementById('btnTestAll');
+const btnResetVol = document.getElementById('btnResetVol');
+
+const sliders = {
+  master: document.getElementById('vol-master'),
+  correct: document.getElementById('vol-correct'),
+  wrong: document.getElementById('vol-wrong'),
+  clear: document.getElementById('vol-clear'),
+  tick: document.getElementById('vol-tick'),
+  bgm: document.getElementById('vol-bgm'),
+};
+const pct = {
+  master: document.getElementById('pct-master'),
+  correct: document.getElementById('pct-correct'),
+  wrong: document.getElementById('pct-wrong'),
+  clear: document.getElementById('pct-clear'),
+  tick: document.getElementById('pct-tick'),
+  bgm: document.getElementById('pct-bgm'),
+};
+function fmtPct(v){ return Math.round(v*100) + '%'; }
+function syncMixerUI(){
+  for(const k of Object.keys(sliders)){
+    sliders[k].value = VOL[k];
+    pct[k].textContent = fmtPct(VOL[k]);
+  }
+}
+function attachSlider(k){
+  sliders[k].addEventListener('input', ()=>{
+    VOL[k] = parseFloat(sliders[k].value || '1');
+    pct[k].textContent = fmtPct(VOL[k]);
+    saveVOL();
+    if(k === 'bgm' || k === 'master') applyBgmVolume();
+  });
+}
+Object.keys(sliders).forEach(attachSlider);
+
+btnMixer.addEventListener('click', ()=>{ syncMixerUI(); mixer.classList.remove('hidden'); });
+btnCloseMixer.addEventListener('click', ()=> mixer.classList.add('hidden'));
+btnResetVol.addEventListener('click', ()=>{ VOL = { ...DEFAULT_VOL }; saveVOL(); syncMixerUI(); applyBgmVolume(); });
+
+btnTestAll.addEventListener('click', ()=>{
+  const order = ['correct','wrong','clear','tick'];
+  let i = 0; const run = ()=>{ if(i>=order.length) return; playSfx(order[i++]); setTimeout(run, 500); }; run();
+});
+syncMixerUI();
+
+/* ========= 其他事件 ========= */
+document.getElementById('btnRestart').addEventListener('click', restartAll);
+document.getElementById('btnNext').addEventListener('click', nextLevel);
+document.getElementById('btnAgain').addEventListener('click', ()=> startLevel(state.level));
+document.getElementById('btnRestart2').addEventListener('click', restartAll);
 
 /* ========= 啟動 ========= */
 startLevel(1);
