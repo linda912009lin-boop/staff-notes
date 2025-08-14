@@ -32,6 +32,10 @@
   .center{text-align:center}
   .hidden{display:none!important}
   footer{padding:16px;color:var(--muted);text-align:center}
+  /* 音效控制條 */
+  .audio-controls{display:flex;align-items:center;gap:8px}
+  .audio-controls .btn{padding:8px 10px;border-radius:999px;font-size:14px}
+  .audio-controls input[type="range"]{width:120px}
 </style>
 </head>
 <body>
@@ -44,6 +48,12 @@
       <div class="pill">關卡 <b id="levelNow">1</b> / <span id="levelTotal">10</span></div>
       <div class="pill">分數 <b id="score">0</b></div>
       <div class="pill">時間 <b id="time">00:00</b></div>
+      <div class="pill audio-controls">
+        <button id="toggleSfx" class="btn ghost" title="音效開關">🔈 SFX：開</button>
+        <button id="toggleBgm" class="btn ghost" title="背景音樂播放/暫停">🎵 BGM：關</button>
+        <label class="muted" for="bgmVol">音量</label>
+        <input id="bgmVol" type="range" min="0" max="1" step="0.01" value="0.4" />
+      </div>
       <button id="btnRestart" class="btn ghost">重新開始</button>
     </div>
   </header>
@@ -98,16 +108,16 @@ const LEVELS = [
   { cards: 20, timeSec: 110, target:'C',   label:'『請找出下列為C的音符』。' },
 ];
 
-/* ========= 圖片與名稱對應（檔名逐字要一致） ========= */
+/* ========= 圖片與名稱對應（檔名需逐字一致） ========= */
 const IMG_DIR = './images/';
 const NOTE_MAP = {
   do:  ['高音譜號下加一線do五線譜.png','低音譜號上加一線do五線譜.png'],
   re:  ['高音譜號下一間re五線譜.png'],
   mi:  ['高音譜號第一線mi五線譜.png'],
   fa:  ['高音譜號第一間fa五線譜.png','低音譜號第四線fa五線譜.png'],
-  sol: ['高音譜號第二線sol五線譜.png','低音譜號第四間sol五線譜.png'], // 你更新後的檔名
+  sol: ['高音譜號第二線sol五線譜.png','低音譜號第四間sol五線譜.png'],
   la:  ['低音譜號第五線la五線譜.png'],
-  si:  ['低音譜號上加一間si五線譜.png'],                             // 你更新後的檔名
+  si:  ['低音譜號上加一間si五線譜.png'],
 };
 const ALIAS = {
   c:'do', d:'re', e:'mi', f:'fa', g:'sol', a:'la', b:'si',
@@ -123,8 +133,30 @@ function pad(n){ return String(n).padStart(2,'0') }
 function fmt(ms){ const s=Math.max(0, Math.floor(ms/1000)); const m=Math.floor(s/60); const r=s%60; return `${pad(m)}:${pad(r)}` }
 function imagesFor(noteKey){ const k = NOTE_MAP[noteKey] ? noteKey : (ALIAS[noteKey] || null); return k ? NOTE_MAP[k] : null; }
 
+/* ========= 音效與背景音樂 ========= */
+const SND_DIR = './sounds/';
+const sounds = {
+  correct: new Audio(SND_DIR + 'correct.mp3'),
+  wrong:   new Audio(SND_DIR + 'wrong.mp3'),
+  clear:   new Audio(SND_DIR + 'clear.mp3'),
+  tick:    new Audio(SND_DIR + 'tick.mp3'),
+};
+function playSfx(name){
+  if(!state.sfxOn) return;
+  const a = sounds[name];
+  if(!a) return;
+  const n = a.cloneNode(); // 允許連播
+  n.volume = 0.9;
+  n.play().catch(()=>{ /* 首次未互動可能被阻擋 */ });
+}
+// 背景音樂（預設關，需點按鈕開）
+const bgm = new Audio(SND_DIR + 'bgm.mp3');
+bgm.loop = true;
+bgm.volume = 0.4;
+
 /* ========= 狀態 ========= */
 const levelTotal = LEVELS.length;
+let lastBeepSec = null;
 let state = {
   level: 1,
   score: 0,
@@ -133,6 +165,8 @@ let state = {
   startedAt: 0,
   isTimeout: false,
   totalElapsedMs: 0,
+  sfxOn: true,
+  bgmOn: false,
 };
 $('#levelTotal').textContent = levelTotal;
 
@@ -143,12 +177,21 @@ function startCountdown(sec){
   state.levelLimitMs = sec * 1000;
   state.startedAt = Date.now();
   state.isTimeout = false;
+  lastBeepSec = null;
   $('#time').textContent = fmt(state.levelLimitMs);
 
   state.timerId = setInterval(()=>{
     const elapsed = Date.now() - state.startedAt;
     const left = Math.max(0, state.levelLimitMs - elapsed);
     $('#time').textContent = fmt(left);
+
+    // 最後 5 秒嗶聲
+    const leftSec = Math.ceil(left/1000);
+    if (leftSec <= 5 && leftSec !== lastBeepSec && left > 0){
+      playSfx('tick');
+      lastBeepSec = leftSec;
+    }
+
     if(left <= 0){
       stopTimer();
       state.isTimeout = true;
@@ -193,7 +236,7 @@ function renderGrid(deck){
     const img = document.createElement('img');
     img.alt = card.isTarget ? 'target' : 'distractor';
 
-    /* 先用原始檔名；若失敗，再用 URL 編碼的檔名重試一次 */
+    // 原始檔名；失敗則用 URL 編碼重試
     img.src = IMG_DIR + card.src;
     img.onerror = () => {
       if (!img.dataset.retry) {
@@ -214,10 +257,12 @@ function onCardClick(el){
   if(state.isTimeout || el.classList.contains('found')) return;
   const isTarget = el.dataset.target==='1';
   if(isTarget){
+    playSfx('correct');
     el.classList.add('found');
     scoreDelta(CONFIG.pointsCorrect);
     checkLevelClear();
   }else{
+    playSfx('wrong');
     el.animate([{transform:'translateY(0)'},{transform:'translateY(3px)'},{transform:'translateY(0)'}], {duration:120});
     scoreDelta(CONFIG.pointsWrong);
   }
@@ -232,6 +277,7 @@ function checkLevelClear(){
     stopTimer();
     state.totalElapsedMs += Math.min(elapsed, state.levelLimitMs);
     if(bonus) scoreDelta(bonus);
+    playSfx('clear');
 
     showResult({ title:'恭喜過關！', canNext:true, elapsedMs:elapsed, bonus });
   }
@@ -294,18 +340,39 @@ function showGameOver(){
 }
 function restartAll(){
   stopTimer();
-  state = { level:1, score:0, timerId:null, levelLimitMs:0, startedAt:0, isTimeout:false, totalElapsedMs:0 };
+  state = { level:1, score:0, timerId:null, levelLimitMs:0, startedAt:0, isTimeout:false, totalElapsedMs:0, sfxOn: state.sfxOn, bgmOn: state.bgmOn };
   document.getElementById('score').textContent = '0';
   document.getElementById('time').textContent  = '00:00';
   startLevel(1);
 }
 
-/* ========= 事件 ========= */
-document.getElementById('btnRestart').addEventListener('click', restartAll);
-document.addEventListener('click', e=>{
-  if(e.target.id==='btnNext') nextLevel();
-  if(e.target.id==='btnAgain') startLevel(state.level);
-  if(e.target.id==='btnRestart2') restartAll();
+/* ========= 音效 UI 事件 ========= */
+const btnSfx = document.getElementById('toggleSfx');
+const btnBgm = document.getElementById('toggleBgm');
+const volBgm = document.getElementById('bgmVol');
+
+btnSfx.addEventListener('click', ()=>{
+  state.sfxOn = !state.sfxOn;
+  btnSfx.textContent = state.sfxOn ? '🔈 SFX：開' : '🔇 SFX：關';
+});
+
+btnBgm.addEventListener('click', async ()=>{
+  state.bgmOn = !state.bgmOn;
+  btnBgm.textContent = state.bgmOn ? '🎵 BGM：開' : '🎵 BGM：關';
+  try{
+    if(state.bgmOn){
+      bgm.volume = parseFloat(volBgm.value || '0.4');
+      await bgm.play();
+    }else{
+      bgm.pause();
+    }
+  }catch(e){
+    // 若被自動播放策略擋住，提示使用者再點一次
+    console.warn('BGM play blocked until user gesture', e);
+  }
+});
+volBgm.addEventListener('input', ()=>{
+  bgm.volume = parseFloat(volBgm.value || '0.4');
 });
 
 /* ========= 啟動 ========= */
