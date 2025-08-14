@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>音符卡牌闖關（單人版｜五線譜）</title>
+<style>
+  :root{ --bg:#f6f7fb; --card:#fff; --ink:#111; --muted:#6b7280; --accent:#111; --ok:#10b981; --border:#e5e7eb; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;background:var(--bg);color:var(--ink)}
+  header{position:sticky;top:0;background:linear-gradient(#fff,#fff0);padding:12px 16px;border-bottom:1px solid var(--border);backdrop-filter:blur(6px);z-index:10}
+  .wrap{max-width:980px;margin:0 auto;padding:16px}
+  h1{font-size:20px;margin:4px 0}
+  .muted{color:var(--muted);font-size:13px}
+  .hud{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+  .pill{display:inline-flex;gap:8px;align-items:center;padding:8px 12px;border:1px solid var(--border);border-radius:999px;background:#fff}
+  .btn{padding:10px 14px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:10px;cursor:pointer;font-weight:600}
+  .btn.ghost{background:#fff;color:var(--accent)}
+  .grid{display:grid;gap:12px;margin-top:16px}
+  .grid.cols-8{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .grid.cols-10{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .grid.cols-12{grid-template-columns:repeat(6,minmax(0,1fr))}
+  .grid.cols-14{grid-template-columns:repeat(7,minmax(0,1fr))}
+  .grid.cols-16{grid-template-columns:repeat(8,minmax(0,1fr))}
+  .grid.cols-20{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:8px;display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;cursor:pointer;position:relative;transition:transform .08s ease}
+  .card img{max-width:90%;max-height:90%;object-fit:contain;user-select:none;pointer-events:none}
+  .card:active{transform:scale(.98)}
+  .card.found{outline:3px solid var(--ok);box-shadow:0 0 0 3px #0000 inset;opacity:.88}
+  .panel{background:#fff;border:1px solid var(--border);border-radius:14px;padding:12px;margin-top:12px}
+  .big{font-size:28px;font-weight:800}
+  .center{text-align:center}
+  .hidden{display:none!important}
+  footer{padding:16px;color:var(--muted);text-align:center}
+</style>
+</head>
+<body>
+  <header>
+    <div class="wrap hud">
+      <div>
+        <h1>音符卡牌闖關（單人）</h1>
+        <div class="muted">全關卡僅使用五線譜圖片。翻對 +10 分、翻錯 -5 分。找到題目要求的所有卡片即可過關。</div>
+      </div>
+      <div class="pill">關卡 <b id="levelNow">1</b> / <span id="levelTotal">10</span></div>
+      <div class="pill">分數 <b id="score">0</b></div>
+      <div class="pill">時間 <b id="time">00:00</b></div>
+      <button id="btnRestart" class="btn ghost">重新開始</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div id="goalPanel" class="panel">
+      <div><b>題目：</b><span id="goalText">『請找出下列為Do的音符』。</span></div>
+    </div>
+
+    <div id="grid" class="grid cols-8"></div>
+
+    <div id="result" class="panel center hidden">
+      <div class="big">恭喜過關！</div>
+      <div style="margin-top:8px">關卡 <span id="rLevel"></span> / <span id="rTotal"></span></div>
+      <div style="margin-top:8px">本關用時 <b id="rTime"></b>．獲得分數 <b id="rScore"></b></div>
+      <div style="margin-top:12px;display:flex;gap:10px;justify-content:center">
+        <button id="btnNext" class="btn">下一關</button>
+        <button id="btnAgain" class="btn ghost">重玩本關</button>
+      </div>
+    </div>
+
+    <div id="gameover" class="panel center hidden">
+      <div class="big">全部通關！</div>
+      <div style="margin-top:8px">總用時 <b id="goTime"></b>．總分 <b id="goScore"></b></div>
+      <div style="margin-top:12px">
+        <button id="btnRestart2" class="btn">重新開始</button>
+      </div>
+    </div>
+  </main>
+
+  <footer>© 2025 卡牌音符闖關（單人｜五線譜）</footer>
+
+<script>
+/* ===== 工具 ===== */
+const $ = s=>document.querySelector(s);
+function rand(arr){ return arr[Math.floor(Math.random()*arr.length)] }
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a }
+function pad(n){ return String(n).padStart(2,'0') }
+function fmt(ms){ const s=Math.floor(ms/1000); const m=Math.floor(s/60); const r=s%60; return `${pad(m)}:${pad(r)}` }
+
+/* ===== 只保留你指定的 10 張五線譜圖片（不混合表示法） =====
+   檔名需與下面完全一致，且與 HTML 在同一資料夾
+*/
+const NOTE_MAP = {
+  // solfege → 檔案
+  do:  ['高音譜號下加一線do五線譜.png','低音譜號上加一線do五線譜.png'],
+  re:  ['高音譜號下一間re五線譜.png'],
+  mi:  ['高音譜號第一線mi五線譜.png'],
+  fa:  ['高音譜號第一間fa五線譜.png','低音譜號第四線fa五線譜.png'],
+  sol: ['高音譜號第二線sol五線譜.png','低音譜號上加一間sol 五線譜.png'],
+  la:  ['低音譜號第五線la五線譜.png'],
+  si:  ['低音譜號上加一間si 五線譜.png'],
+};
+// letter 名稱的別名（題目需要用到 C/D/F/A）
+const ALIAS = {
+  c:'do', d:'re', e:'mi', f:'fa', g:'sol', a:'la', b:'si',
+  C:'do', D:'re', E:'mi', F:'fa', G:'sol', A:'la', B:'si',
+  Do:'do', Re:'re', Mi:'mi', Fa:'fa', Sol:'sol', La:'la', Si:'si'
+};
+function imagesFor(noteKey){
+  const k = NOTE_MAP[noteKey] ? noteKey : (ALIAS[noteKey] || null);
+  return k ? NOTE_MAP[k] : null;
+}
+
+/* ===== 關卡（全為 staff，且題目句子照你指定） ===== */
+const LEVELS = [
+  { cards:8,  target:'Do',  label:'『請找出下列為Do的音符』。' },
+  { cards:8,  target:'F',   label:'『請找出下列為Ｆ的音符』。' },
+  { cards:10, target:'Sol', label:'『請找出下列為Sol的音符』。' },
+  { cards:12, target:'A',   label:'『請找出下列為A的音符』。' },
+  { cards:12, target:'Si',  label:'『請找出下列為Si的音符』。' },
+  { cards:14, target:'D',   label:'『請找出下列為D的音符』。' },
+  { cards:14, target:'Mi',  label:'『請找出下列為Mi的音符』。' },
+  { cards:16, target:'Fa',  label:'『請找出下列為Fa的音符』。' },
+  { cards:16, target:'La',  label:'『請找出下列為La的音符』。' },
+  { cards:20, target:'C',   label:'『請找出下列為C的音符』。' },
+];
+const levelTotal = LEVELS.length;
+
+/* ===== 狀態 / 計時 ===== */
+let state = { level:1, score:0, startAt:0, timerId:null, totalElapsedMs:0 };
+$('#levelTotal').textContent = levelTotal;
+
+function startTimer(){
+  stopTimer();
+  state.startAt = Date.now();
+  state.timerId = setInterval(()=>{
+    const ms = Date.now() - state.startAt;
+    $('#time').textContent = fmt(state.totalElapsedMs + ms);
+  }, 200);
+}
+function stopTimer(){ if(state.timerId){ clearInterval(state.timerId); state.timerId=null } }
+
+/* ===== 產牌（只用 staff） ===== */
+function buildDeck(cfg){
+  const tgtImgs = imagesFor(cfg.target);
+  if(!tgtImgs || tgtImgs.length===0){
+    alert('找不到目標音符對應的圖片：'+cfg.target);
+    return [];
+  }
+  // 可作為干擾的音（有圖的）
+  const noteKeys = Object.keys(NOTE_MAP);
+  const distractPool = noteKeys.filter(k => k !== (ALIAS[cfg.target]||cfg.target));
+
+  const deck = [];
+  // 至少 40% 是目標
+  const targetCount = Math.max(Math.floor(cfg.cards*0.4), 2);
+  for(let i=0;i<targetCount;i++){
+    deck.push({ isTarget:true, src: rand(tgtImgs) });
+  }
+  while(deck.length < cfg.cards){
+    const note = rand(distractPool);
+    const imgs = NOTE_MAP[note];
+    if(!imgs || !imgs.length) continue;
+    deck.push({ isTarget:false, src: rand(imgs) });
+  }
+  return shuffle(deck);
+}
+
+/* ===== 渲染 / 互動 ===== */
+const grid = $('#grid');
+function renderGoal(cfg){ $('#goalText').textContent = cfg.label; }
+function renderGrid(deck){
+  grid.className = `grid cols-${deck.length}`;
+  grid.innerHTML = '';
+  deck.forEach((card,idx)=>{
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.dataset.idx = idx;
+    el.dataset.target = card.isTarget ? '1' : '0';
+    const img = document.createElement('img');
+    img.src = card.src;
+    img.alt = card.isTarget ? 'target' : 'distractor';
+    el.appendChild(img);
+    el.addEventListener('click', ()=> onCardClick(el));
+    grid.appendChild(el);
+  });
+}
+function scoreDelta(d){ state.score = Math.max(0, state.score + d); $('#score').textContent = state.score }
+function onCardClick(el){
+  if(el.classList.contains('found')) return;
+  const isTarget = el.dataset.target==='1';
+  if(isTarget){ el.classList.add('found'); scoreDelta(+10); checkLevelClear(); }
+  else{ el.animate([{transform:'translateY(0)'},{transform:'translateY(3px)'},{transform:'translateY(0)'}], {duration:120}); scoreDelta(-5); }
+}
+function checkLevelClear(){
+  const remain = [...grid.children].filter(c=>c.dataset.target==='1' && !c.classList.contains('found'));
+  if(remain.length===0){
+    const elapsed = Date.now() - state.startAt;
+    state.totalElapsedMs += elapsed;
+    showResult(elapsed);
+  }
+}
+
+/* ===== 關卡控制 ===== */
+function startLevel(n){
+  if(n<1) n=1;
+  if(n>levelTotal){ showGameOver(); return; }
+  document.getElementById('result').classList.add('hidden');
+  document.getElementById('gameover').classList.add('hidden');
+  document.getElementById('goalPanel').classList.remove('hidden');
+  grid.classList.remove('hidden');
+
+  state.level = n;
+  document.getElementById('levelNow').textContent = String(n);
+
+  const cfg = LEVELS[n-1];
+  renderGoal(cfg);
+  const deck = buildDeck(cfg);
+  renderGrid(deck);
+  startTimer();
+}
+function showResult(elapsed){
+  stopTimer();
+  document.getElementById('rLevel').textContent = state.level;
+  document.getElementById('rTotal').textContent = levelTotal;
+  document.getElementById('rTime').textContent = fmt(elapsed);
+  document.getElementById('rScore').textContent = state.score;
+  document.getElementById('result').classList.remove('hidden');
+}
+function showGameOver(){
+  stopTimer();
+  grid.classList.add('hidden');
+  document.getElementById('goalPanel').classList.add('hidden');
+  document.getElementById('gameover').classList.remove('hidden');
+  document.getElementById('goTime').textContent = fmt(state.totalElapsedMs);
+  document.getElementById('goScore').textContent = state.score;
+}
+function nextLevel(){ if(state.level>=levelTotal){ showGameOver(); return } startLevel(state.level+1) }
+function restartAll(){
+  stopTimer();
+  state = { level:1, score:0, startAt:0, timerId:null, totalElapsedMs:0 };
+  document.getElementById('score').textContent = '0';
+  document.getElementById('time').textContent = '00:00';
+  startLevel(1);
+}
+
+/* ===== 事件 ===== */
+document.getElementById('btnRestart').addEventListener('click', restartAll);
+document.addEventListener('click', e=>{
+  if(e.target.id==='btnNext') nextLevel();
+  if(e.target.id==='btnAgain') startLevel(state.level);
+  if(e.target.id==='btnRestart2') restartAll();
+});
+
+/* ===== 啟動 ===== */
+startLevel(1);
+</script>
+</body>
+</html>
